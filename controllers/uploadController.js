@@ -1,8 +1,75 @@
 const fs = require("fs");
 const path = require("path");
 const db = require("../config/db");
-const redis = require("../config/redisClient");
+// const redis = require("../config/redisClient");
 const { v4: uuidv4 } = require("uuid");
+
+// exports.uploadVideoAndThumbnail = async (req, res) => {
+//   let { fileId, chunkIndex, totalChunks } = req.body;
+//   if (!fileId) fileId = uuidv4();
+
+//   const chunkDir = path.join(__dirname, "../temp", fileId);
+//   const uploadDir = path.join(__dirname, "../uploads");
+//   const thumbDir = path.join(__dirname, "../thumbnails");
+//   const fileName = `${fileId}.mp4`;
+//   const filePath = path.join(uploadDir, fileName);
+
+//   fs.mkdirSync(chunkDir, { recursive: true });
+//   fs.mkdirSync(uploadDir, { recursive: true });
+//   fs.mkdirSync(thumbDir, { recursive: true });
+
+//   // Process chunk (if exists)
+//   if (req.files && req.files.chunk) {
+//     const chunkFile = path.join(chunkDir, `${chunkIndex}`);
+//     fs.writeFileSync(chunkFile, req.files.chunk[0].buffer);
+//     await redis.sAdd(`upload:${fileId}`, chunkIndex);
+//     await redis.expire(`upload:${fileId}`, 3600);
+//   }
+
+//   // Process thumbnail (if exists)
+//   if (req.files && req.files.thumbnail) {
+//     const thumbPath = `${fileId}_thumb_${Date.now()}.jpg`;
+//     const dest = path.join(thumbDir, thumbPath);
+//     fs.writeFileSync(dest, req.files.thumbnail[0].buffer);
+//     await redis.set(`thumb:${fileId}`, thumbPath);
+//     await redis.expire(`thumb:${fileId}`, 3600);
+//   }
+
+//   // Check chunk completion
+//   const received = await redis.sMembers(`upload:${fileId}`);
+//   if (totalChunks && received.length === parseInt(totalChunks)) {
+//     const writeStream = fs.createWriteStream(filePath);
+//     for (let i = 0; i < totalChunks; i++) {
+//       const chunk = fs.readFileSync(path.join(chunkDir, `${i}`));
+//       writeStream.write(chunk);
+//     }
+//     writeStream.end();
+//     fs.rmSync(chunkDir, { recursive: true });
+//     await redis.del(`upload:${fileId}`);
+
+//     const thumbPath = await redis.get(`thumb:${fileId}`);
+//     await redis.del(`thumb:${fileId}`);
+
+//     db.query(
+//       "INSERT INTO videos (file_id, file_path, thumbnail_path) VALUES (?, ?, ?)",
+//       [fileId, fileName, thumbPath || null],
+//       (err) => {
+//         if (err) return res.status(500).json({ message: "DB insert error" });
+//         res.status(200).json({
+//           message: "Upload complete",
+//           fileId,
+//           video: `/uploads/${fileName}`,
+//           thumbnail: thumbPath ? `/thumbnails/${thumbPath}` : null,
+//         });
+//       }
+//     );
+//   } else {
+//     res.status(200).json({
+//       message: "Chunk or thumbnail uploaded, waiting for more",
+//       fileId,
+//     });
+//   }
+// };
 
 exports.uploadVideoAndThumbnail = async (req, res) => {
   let { fileId, chunkIndex, totalChunks } = req.body;
@@ -18,48 +85,57 @@ exports.uploadVideoAndThumbnail = async (req, res) => {
   fs.mkdirSync(uploadDir, { recursive: true });
   fs.mkdirSync(thumbDir, { recursive: true });
 
-  // Process chunk (if exists)
+  // Save chunk
   if (req.files && req.files.chunk) {
     const chunkFile = path.join(chunkDir, `${chunkIndex}`);
     fs.writeFileSync(chunkFile, req.files.chunk[0].buffer);
-    await redis.sAdd(`upload:${fileId}`, chunkIndex);
-    await redis.expire(`upload:${fileId}`, 3600);
   }
 
-  // Process thumbnail (if exists)
+  // Save thumbnail if uploaded
+  let thumbnailPath = null;
   if (req.files && req.files.thumbnail) {
-    const thumbPath = `${fileId}_thumb_${Date.now()}.jpg`;
-    const dest = path.join(thumbDir, thumbPath);
+    const thumbName = `${fileId}_thumb_${Date.now()}.jpg`;
+    const dest = path.join(thumbDir, thumbName);
     fs.writeFileSync(dest, req.files.thumbnail[0].buffer);
-    await redis.set(`thumb:${fileId}`, thumbPath);
-    await redis.expire(`thumb:${fileId}`, 3600);
+    thumbnailPath = thumbName;
+
+    // Save thumb path temporarily in a text file
+    fs.writeFileSync(path.join(chunkDir, "thumbnail.txt"), thumbName);
   }
 
-  // Check chunk completion
-  const received = await redis.sMembers(`upload:${fileId}`);
-  if (totalChunks && received.length === parseInt(totalChunks)) {
+  // Check if all chunks are received
+  const uploadedChunks = fs
+    .readdirSync(chunkDir)
+    .filter((name) => !name.endsWith(".txt"));
+  if (totalChunks && uploadedChunks.length === parseInt(totalChunks)) {
     const writeStream = fs.createWriteStream(filePath);
     for (let i = 0; i < totalChunks; i++) {
-      const chunk = fs.readFileSync(path.join(chunkDir, `${i}`));
+      const chunkPath = path.join(chunkDir, `${i}`);
+      const chunk = fs.readFileSync(chunkPath);
       writeStream.write(chunk);
     }
     writeStream.end();
+
+    // Read thumbnail if saved
+    const thumbFilePath = path.join(chunkDir, "thumbnail.txt");
+    if (fs.existsSync(thumbFilePath)) {
+      thumbnailPath = fs.readFileSync(thumbFilePath, "utf-8");
+    }
+
+    // Cleanup temp
     fs.rmSync(chunkDir, { recursive: true });
-    await redis.del(`upload:${fileId}`);
 
-    const thumbPath = await redis.get(`thumb:${fileId}`);
-    await redis.del(`thumb:${fileId}`);
-
+    // Save to DB
     db.query(
       "INSERT INTO videos (file_id, file_path, thumbnail_path) VALUES (?, ?, ?)",
-      [fileId, fileName, thumbPath || null],
+      [fileId, fileName, thumbnailPath || null],
       (err) => {
         if (err) return res.status(500).json({ message: "DB insert error" });
         res.status(200).json({
           message: "Upload complete",
           fileId,
           video: `/uploads/${fileName}`,
-          thumbnail: thumbPath ? `/thumbnails/${thumbPath}` : null,
+          thumbnail: thumbnailPath ? `/thumbnails/${thumbnailPath}` : null,
         });
       }
     );
