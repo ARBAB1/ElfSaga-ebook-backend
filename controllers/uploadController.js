@@ -72,7 +72,9 @@ const { v4: uuidv4 } = require("uuid");
 // };
 
 exports.uploadVideoAndThumbnail = async (req, res) => {
-  let { fileId, chunkIndex, totalChunks } = req.body;
+  let { fileId, chunkIndex, totalChunks, paid_flag } = req.body;
+
+  // Default fileId if not provided
   if (!fileId) fileId = uuidv4();
 
   const chunkDir = path.join(__dirname, "../temp", fileId);
@@ -99,7 +101,7 @@ exports.uploadVideoAndThumbnail = async (req, res) => {
     fs.writeFileSync(dest, req.files.thumbnail[0].buffer);
     thumbnailPath = thumbName;
 
-    // Save thumb path temporarily in a text file
+    // Save thumbnail path temporarily in a text file
     fs.writeFileSync(path.join(chunkDir, "thumbnail.txt"), thumbName);
   }
 
@@ -107,13 +109,16 @@ exports.uploadVideoAndThumbnail = async (req, res) => {
   const uploadedChunks = fs
     .readdirSync(chunkDir)
     .filter((name) => !name.endsWith(".txt"));
+
   if (totalChunks && uploadedChunks.length === parseInt(totalChunks)) {
     const writeStream = fs.createWriteStream(filePath);
+
     for (let i = 0; i < totalChunks; i++) {
       const chunkPath = path.join(chunkDir, `${i}`);
       const chunk = fs.readFileSync(chunkPath);
       writeStream.write(chunk);
     }
+
     writeStream.end();
 
     // Read thumbnail if saved
@@ -125,17 +130,20 @@ exports.uploadVideoAndThumbnail = async (req, res) => {
     // Cleanup temp
     fs.rmSync(chunkDir, { recursive: true });
 
-    // Save to DB
+    // Insert into DB (handling `paid_flag`)
+    const paidFlagValue = paid_flag === "true" ? 1 : 0; // Ensure the paid_flag is either 1 or 0
     db.query(
-      "INSERT INTO videos (file_id, file_path, thumbnail_path) VALUES (?, ?, ?)",
-      [fileId, fileName, thumbnailPath || null],
+      "INSERT INTO videos (file_id, file_path, thumbnail_path, paid_flag) VALUES (?, ?, ?, ?)",
+      [fileId, fileName, thumbnailPath || null, paidFlagValue],
       (err) => {
         if (err) return res.status(500).json({ message: "DB insert error" });
+
         res.status(200).json({
           message: "Upload complete",
           fileId,
           video: `/uploads/${fileName}`,
           thumbnail: thumbnailPath ? `/thumbnails/${thumbnailPath}` : null,
+          paid_flag: paidFlagValue === 1, // Convert to boolean for response
         });
       }
     );
@@ -152,30 +160,49 @@ exports.getAllVideos = (req, res) => {
   const limit = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
 
-  db.query("SELECT COUNT(*) as total FROM videos", (countErr, countResult) => {
-    if (countErr) return res.status(500).json({ message: "DB count error" });
-    const total = countResult[0].total;
-    db.query(
-      "SELECT file_id, file_path, thumbnail_path, created_at FROM videos ORDER BY created_at DESC LIMIT ? OFFSET ?",
-      [limit, offset],
-      (err, results) => {
-        if (err) return res.status(500).json({ message: "DB fetch error" });
-        res.status(200).json({
-          total,
-          page,
-          limit,
-          videos: results.map((row) => ({
-            fileId: row.file_id,
-            video: `/uploads/${row.file_path}`,
-            thumbnail: row.thumbnail_path
-              ? `/thumbnails/${row.thumbnail_path}`
-              : null,
-            createdAt: row.created_at,
-          })),
-        });
-      }
-    );
-  });
+  const paidFlag = req.query.paid; // Get the 'paid' flag from query parameter
+  let paidCondition = ""; // Default condition if no paid flag is provided
+  let queryParams = [limit, offset];
+
+  if (paidFlag === "true") {
+    paidCondition = "AND paid_flag = 1"; // Condition for paid videos
+  } else if (paidFlag === "false") {
+    paidCondition = "AND paid_flag = 0"; // Condition for free videos
+  }
+
+  // Get total count of videos with the paid flag condition
+  db.query(
+    `SELECT COUNT(*) as total FROM videos WHERE 1=1 ${paidCondition}`,
+    queryParams,
+    (countErr, countResult) => {
+      if (countErr) return res.status(500).json({ message: "DB count error" });
+      const total = countResult[0].total;
+
+      // Get the list of videos with the paid flag condition
+      db.query(
+        `SELECT file_id, file_path, thumbnail_path, paid_flag, created_at FROM videos WHERE 1=1 ${paidCondition} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+        queryParams,
+        (err, results) => {
+          if (err) return res.status(500).json({ message: "DB fetch error" });
+
+          res.status(200).json({
+            total,
+            page,
+            limit,
+            videos: results.map((row) => ({
+              fileId: row.file_id,
+              video: `/uploads/${row.file_path}`,
+              thumbnail: row.thumbnail_path
+                ? `/thumbnails/${row.thumbnail_path}`
+                : null,
+              paid_flag: row.paid_flag === 1, // Converting the paid_flag into a boolean
+              createdAt: row.created_at,
+            })),
+          });
+        }
+      );
+    }
+  );
 };
 
 exports.deleteVideo = (req, res) => {
