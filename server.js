@@ -20,6 +20,8 @@ app.use(
   },
   express.static(path.join(__dirname, "uploads"))
 );
+app.use('/thumbnails', express.static(path.join(__dirname, 'thumbnails')));
+
 app.use("/auth", authRoutes);
 app.use("/", studentRoutes);
 app.use("/", uploadRoutes);
