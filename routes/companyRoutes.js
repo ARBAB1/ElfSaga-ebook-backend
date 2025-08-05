@@ -4,12 +4,12 @@ const companyController = require("../controllers/companyController");
 
 // Order matters: static routes before dynamic ones
 router.post("/create", companyController.create);
-router.get("/top10", companyController.getTopTenCompanies);
+router.get("/allVideos", companyController.allVideos);
 router.get("/getAll", companyController.getAll);
 router.get("/search", companyController.search); // MOVE ABOVE
 router.get("/check-username", companyController.checkUsername);
-router.get("/totalcompany", companyController.totalCompany);
-router.get("/activecompany", companyController.activeCompany);
+router.get("/freeVideos", companyController.freeVideos);
+router.get("/paidVideos", companyController.paidVideos);
 
 
 router.put("/update/:id", companyController.update);

@@ -134,7 +134,7 @@ exports.checkUsername = (req, res) => {
 };
 
 // TOTAL COMPANIES
-exports.totalCompany = (req, res) => {
+exports.freeVideos = (req, res) => {
   db.query("SELECT COUNT(*) AS total FROM companies", (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.status(200).json({ total: rows[0].total });
@@ -142,7 +142,7 @@ exports.totalCompany = (req, res) => {
 };
 
 // ACTIVE COMPANIES
-exports.activeCompany = (req, res) => {
+exports.paidVideos = (req, res) => {
   db.query("SELECT COUNT(*) AS total FROM companies WHERE status = 'active'", (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.status(200).json({ total: rows[0].total });
@@ -150,7 +150,7 @@ exports.activeCompany = (req, res) => {
 };
 
 // TopTenCompanies
-exports.getTopTenCompanies = async (req, res) => {
+exports.allVideos = async (req, res) => {
   try {
     const query = `SELECT name, email FROM companies WHERE status = 'active' ORDER BY created_at DESC LIMIT 10`;
     db.query(query, (err, result) => {
